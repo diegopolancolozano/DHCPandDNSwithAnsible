@@ -1,0 +1,40 @@
+---
+- name: Ensure DHCP package is installed
+  ansible.builtin.package:
+    name: "{{ dhcp_package }}"
+    state: present
+
+- name: Select interface for DHCP server in sysconfig
+  ansible.builtin.lineinfile:
+    path: "{{ dhcp_sysconfig_file }}"
+    regexp: '^DHCPDARGS='
+    line: 'DHCPDARGS="{{ dhcp_interface }}"'
+    create: yes
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart DHCP
+
+- name: Configure dhcpd.conf
+  ansible.builtin.template:
+    src: dhcpd.conf.j2
+    dest: "{{ dhcp_conf_file }}"
+    owner: root
+    group: root
+    mode: '0644'
+    validate: "dhcpd -t -cf %s"
+  notify: Restart DHCP
+
+- name: Ensure firewalld has DHCP port open
+  ansible.builtin.firewalld:
+    service: dhcp
+    permanent: true
+    state: enabled
+    immediate: true
+  ignore_errors: true
+
+- name: Ensure DHCP is enabled and started
+  ansible.builtin.service:
+    name: "{{ dhcp_service }}"
+    state: started
+    enabled: true

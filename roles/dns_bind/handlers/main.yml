@@ -1,0 +1,11 @@
+---
+- name: Restart BIND
+  ansible.builtin.service:
+    name: "{{ bind_service }}"
+    state: restarted
+    enabled: true
+
+- name: Reload BIND
+  ansible.builtin.service:
+    name: "{{ bind_service }}"
+    state: reloaded

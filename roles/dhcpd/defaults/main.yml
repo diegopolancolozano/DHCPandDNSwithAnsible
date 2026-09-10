@@ -1,0 +1,5 @@
+---
+dhcp_package: "dhcp-server"
+dhcp_service: "dhcpd"
+dhcp_conf_file: "/etc/dhcp/dhcpd.conf"
+dhcp_sysconfig_file: "/etc/sysconfig/dhcpd"

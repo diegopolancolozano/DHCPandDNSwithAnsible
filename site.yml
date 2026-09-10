@@ -1,0 +1,7 @@
+---
+- name: Provisión de Infraestructura Base (DNS + DHCP)
+  hosts: infra
+  gather_facts: true
+  roles:
+    - dns_bind
+    - dhcpd

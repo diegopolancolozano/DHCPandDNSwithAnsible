@@ -1,0 +1,6 @@
+---
+- name: Restart DHCP
+  ansible.builtin.service:
+    name: "{{ dhcp_service }}"
+    state: restarted
+    enabled: true
