@@ -1,0 +1,53 @@
+Para completar tu repositorio y dejarlo con calidad profesional para la entrega de tu clase, aquí tienes el contenido exacto que debes colocar en cada archivo.
+
+### FILE: README.md
+
+```markdown
+# Laboratorio de Infraestructura: BIND (DNS) y DHCP en Rocky Linux 9
+
+Automatización del despliegue de servicios de red críticos (DNS autoritativo y DHCP) utilizando Ansible como herramienta de Infraestructura como Código (IaC).
+
+## Autor
+- **Diego Polanco**
+
+## Estructura del Repositorio
+- `inventory/hosts.ini`: Inventario de nodos gestionados y conexiones locales o remotas.
+- `group_vars/all.yml`: Variables globales para la parametrización de redes, rangos DHCP y zonas DNS.
+- `roles/dns_bind/`: Rol de Ansible para la instalación, validación sintáctica (`named-checkconf`, `named-checkzone`) y configuración de BIND.
+- `roles/dhcpd/`: Rol de Ansible para la configuración del servidor DHCP (`dhcpd.conf`), control de interfaz y validación con `dhcpd -t`.
+- `site.yml`: Playbook principal que orquesta la ejecución de los roles.
+
+## Requisitos Previos
+1. Sistema operativo objetivo: Rocky Linux 9 (ejecutado en entorno de VirtualBox con adaptador de red interno/host-only).
+2. Ansible instalado en el nodo de control.
+
+## Instrucciones de Ejecución
+
+1. Configura la IP estática y el inventario en `inventory/hosts.ini`.
+2. Ajusta las variables de red y dominios en `group_vars/all.yml`.
+3. Ejecuta el playbook de aprovisionamiento:
+   ```bash
+   ansible-playbook -i inventory/hosts.ini site.yml
+
+```
+
+```
+
+### FILE: .gitignore
+```text
+# Archivos temporales de Ansible y Python
+*.retry
+*.pyc
+.ansible/
+roles/galaxy/
+
+# Directorios y archivos de entorno o IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs de ejecución
+*.log
+
+```
