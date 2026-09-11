@@ -10,7 +10,6 @@ infra_netmask: "255.255.255.0"
 # ==========================================
 # Variables DNS (BIND)
 # ==========================================
-# Al ser un laboratorio, podemos usar forwarders públicos comunes
 dns_forwarders:
   - "8.8.8.8"
   - "1.1.1.1"
@@ -34,7 +33,6 @@ dns_records_ptr:
 # Variables DHCP
 # ==========================================
 # enp0s8 suele ser la segunda interfaz en VirtualBox (Host-Only o Red Interna). 
-# Verifica con 'ip a' o 'nmcli device' en tu VM si la tuya se llama distinto (ej. enp0s3).
 dhcp_interface: "enp0s8"
 dhcp_gateway: "192.168.56.1"
 dhcp_range_start: "192.168.56.100"
