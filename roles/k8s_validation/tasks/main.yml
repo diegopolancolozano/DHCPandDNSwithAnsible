@@ -1,0 +1,127 @@
+---
+- name: Create validation manifest directory on Bastion
+  ansible.builtin.file:
+    path: /opt/k8s-lab
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Copy idempotent Nginx NodePort manifest to Bastion
+  ansible.builtin.copy:
+    src: nginx-nodeport.yml
+    dest: /opt/k8s-lab/nginx-nodeport.yml
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Copy CoreDNS validation Job manifest to Bastion
+  ansible.builtin.copy:
+    src: dns-resolution-job.yml
+    dest: /opt/k8s-lab/dns-resolution-job.yml
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Apply Nginx Deployment and NodePort Service
+  ansible.builtin.command:
+    argv:
+      - kubectl
+      - apply
+      - -f
+      - /opt/k8s-lab/nginx-nodeport.yml
+  environment:
+    KUBECONFIG: /home/user/.kube/config
+  register: nginx_apply
+  changed_when: "'created' in nginx_apply.stdout or 'configured' in nginx_apply.stdout"
+
+- name: Wait for Nginx Deployment to become available
+  ansible.builtin.command:
+    argv:
+      - kubectl
+      - rollout
+      - status
+      - deployment/taller-nginx
+      - --timeout=180s
+  environment:
+    KUBECONFIG: /home/user/.kube/config
+  register: nginx_rollout
+  changed_when: false
+  until: nginx_rollout.rc == 0
+  retries: 2
+  delay: 5
+
+- name: Verify the Nginx Pod is scheduled on the Worker
+  ansible.builtin.command:
+    argv:
+      - kubectl
+      - get
+      - pods
+      - -l
+      - app=taller-nginx
+      - -o
+      - wide
+  environment:
+    KUBECONFIG: /home/user/.kube/config
+  register: nginx_pod_location
+  changed_when: false
+
+- name: Assert that Nginx is running on the Worker
+  ansible.builtin.assert:
+    that:
+      - "'k8s-worker-01' in nginx_pod_location.stdout"
+      - "'Running' in nginx_pod_location.stdout"
+    fail_msg: Nginx must be Running on k8s-worker-01.
+
+- name: Test HTTP NodePort from Bastion to Worker
+  ansible.builtin.uri:
+    url: http://172.20.0.22:30080/
+    method: GET
+    status_code: 200
+    return_content: true
+  register: nginx_http_test
+
+- name: Apply the CoreDNS resolution test Job
+  ansible.builtin.command:
+    argv:
+      - kubectl
+      - apply
+      - -f
+      - /opt/k8s-lab/dns-resolution-job.yml
+  environment:
+    KUBECONFIG: /home/user/.kube/config
+  register: dns_job_apply
+  changed_when: "'created' in dns_job_apply.stdout or 'configured' in dns_job_apply.stdout"
+
+- name: Wait for the CoreDNS test Job to complete
+  ansible.builtin.command:
+    argv:
+      - kubectl
+      - wait
+      - --for=condition=complete
+      - job/taller-dns-resolution
+      - --timeout=180s
+  environment:
+    KUBECONFIG: /home/user/.kube/config
+  register: dns_job_wait
+  changed_when: false
+  until: dns_job_wait.rc == 0
+  retries: 2
+  delay: 5
+
+- name: Read CoreDNS test output
+  ansible.builtin.command:
+    argv:
+      - kubectl
+      - logs
+      - job/taller-dns-resolution
+  environment:
+    KUBECONFIG: /home/user/.kube/config
+  register: dns_job_logs
+  changed_when: false
+
+- name: Assert that the in-cluster DNS name resolved
+  ansible.builtin.assert:
+    that:
+      - "'kubernetes.default.svc.cluster.local' in dns_job_logs.stdout"
+    fail_msg: CoreDNS did not resolve kubernetes.default.svc.cluster.local.

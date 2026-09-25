@@ -75,7 +75,6 @@
     name: "{{ kubernetes_package_names }}"
     state: present
     disable_excludes: kubernetes
-    update_cache: true
   when: not ansible_check_mode
 
 - name: Read the containerd v2 default configuration

@@ -15,5 +15,4 @@
     name: kubectl
     state: present
     disable_excludes: kubernetes
-    update_cache: true
   when: not ansible_check_mode

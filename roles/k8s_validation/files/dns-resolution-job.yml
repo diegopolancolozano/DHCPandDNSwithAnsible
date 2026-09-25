@@ -1,0 +1,29 @@
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: taller-dns-resolution
+  namespace: default
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        app: taller-dns-resolution
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: dns-check
+          image: busybox:1.36.1
+          command:
+            - sh
+            - -c
+            - nslookup kubernetes.default.svc.cluster.local
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 48Mi

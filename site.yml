@@ -73,3 +73,11 @@
       delegate_to: localhost
       become: false
       when: not ansible_check_mode
+
+- name: Deploy and verify an application from Bastion
+  hosts: infra
+  gather_facts: false
+  become: true
+  roles:
+    - role: k8s_validation
+      when: not ansible_check_mode
