@@ -1,0 +1,132 @@
+---
+- name: Set Kubernetes node hostname from inventory
+  ansible.builtin.hostname:
+    name: "{{ inventory_hostname }}"
+
+- name: Configure Kubernetes node internal interface with DHCP
+  community.general.nmcli:
+    conn_name: "{{ node_internal_connection }}"
+    ifname: "{{ node_internal_interface }}"
+    type: ethernet
+    method4: auto
+    method6: disabled
+    dns4:
+      - "{{ node_dns_server }}"
+    dns4_ignore_auto: true
+    dns4_search:
+      - "{{ infra_domain }}"
+    never_default4: true
+    autoconnect: true
+    state: present
+  register: internal_profile
+
+- name: Check active connection on Kubernetes node internal interface
+  ansible.builtin.command:
+    argv:
+      - nmcli
+      - -g
+      - GENERAL.CONNECTION
+      - device
+      - show
+      - "{{ node_internal_interface }}"
+  register: active_internal_connection
+  changed_when: false
+  check_mode: false
+
+- name: Activate Kubernetes node internal interface when needed
+  ansible.builtin.command:
+    argv:
+      - nmcli
+      - connection
+      - up
+      - "{{ node_internal_connection }}"
+  when: internal_profile.changed or active_internal_connection.stdout != node_internal_connection
+
+- name: Configure stable Host-Only management interface
+  community.general.nmcli:
+    conn_name: "{{ node_management_connection }}"
+    ifname: "{{ node_management_interface }}"
+    type: ethernet
+    ip4: "{{ node_management_ip }}"
+    method4: manual
+    method6: disabled
+    dns4:
+      - "{{ node_dns_server }}"
+    dns4_ignore_auto: true
+    dns4_search:
+      - "{{ infra_domain }}"
+    never_default4: true
+    autoconnect: true
+    state: present
+  register: management_profile
+
+- name: Check active connection on Kubernetes node management interface
+  ansible.builtin.command:
+    argv:
+      - nmcli
+      - -g
+      - GENERAL.CONNECTION
+      - device
+      - show
+      - "{{ node_management_interface }}"
+  register: active_management_connection
+  changed_when: false
+  check_mode: false
+
+- name: Activate stable Host-Only management address asynchronously
+  ansible.builtin.command:
+    argv:
+      - nmcli
+      - connection
+      - up
+      - "{{ node_management_connection }}"
+  async: 45
+  poll: 0
+  when:
+    - not ansible_check_mode
+    - management_profile.changed or active_management_connection.stdout != node_management_connection
+
+- name: Wait for SSH on the stable management address
+  ansible.builtin.wait_for:
+    host: "{{ node_management_ip.split('/')[0] }}"
+    port: 22
+    timeout: 60
+  delegate_to: localhost
+  become: false
+  when:
+    - not ansible_check_mode
+    - management_profile.changed or active_management_connection.stdout != node_management_connection
+
+- name: Read internal DNS priority
+  ansible.builtin.command:
+    argv:
+      - nmcli
+      - -g
+      - ipv4.dns-priority
+      - connection
+      - show
+      - "{{ node_internal_connection }}"
+  register: internal_dns_priority
+  changed_when: false
+  check_mode: false
+
+- name: Prefer the lab DNS over VirtualBox NAT DNS
+  ansible.builtin.command:
+    argv:
+      - nmcli
+      - connection
+      - modify
+      - "{{ node_internal_connection }}"
+      - ipv4.dns-priority
+      - "-50"
+  when: internal_dns_priority.stdout | trim != '-50'
+  register: internal_dns_priority_update
+
+- name: Apply preferred internal DNS settings
+  ansible.builtin.command:
+    argv:
+      - nmcli
+      - connection
+      - up
+      - "{{ node_internal_connection }}"
+  when: internal_dns_priority_update.changed | default(false)

@@ -1,0 +1,16 @@
+; {{ ansible_managed }}
+$TTL 86400
+@   IN  SOA     ns1.{{ infra_domain }}. admin.{{ infra_domain }}. (
+            {{ dns_serial }}    ; Serial
+            3600        ; Refresh
+            1800        ; Retry
+            604800      ; Expire
+            86400 )     ; Minimum TTL
+
+; Name Servers
+@       IN  NS      ns1.{{ infra_domain }}.
+
+; Internal cluster PTR records
+{% for ptr in dns_records_ptr_internal %}
+{{ ptr.last_octet }}      IN  PTR     {{ ptr.name }}.{{ infra_domain }}.
+{% endfor %}

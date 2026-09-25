@@ -3,5 +3,73 @@
   hosts: infra
   gather_facts: true
   roles:
+    - network
     - dns_bind
     - dhcpd
+    - kubectl_client
+
+- name: Configure Kubernetes node internal networking
+  hosts: k8s_nodes
+  gather_facts: false
+  become: true
+  roles:
+    - k8s_node_network
+    - k8s_prerequisites
+
+- name: Initialize the Kubernetes control plane and install its CNI
+  hosts: k8s_control_plane
+  gather_facts: false
+  become: true
+  roles:
+    - kubeadm_control_plane
+
+- name: Join worker nodes to Kubernetes
+  hosts: k8s_workers
+  gather_facts: false
+  become: true
+  roles:
+    - k8s_join_worker
+
+- name: Copy the cluster admin kubeconfig to Bastion
+  hosts: k8s_control_plane
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Fetch admin kubeconfig to a temporary controller file
+      ansible.builtin.fetch:
+        src: /etc/kubernetes/admin.conf
+        dest: /tmp/ansible-k8s-admin.conf
+        flat: true
+      no_log: true
+      when: not ansible_check_mode
+
+    - name: Create kubectl configuration directory for Bastion user
+      ansible.builtin.file:
+        path: /home/user/.kube
+        state: directory
+        owner: user
+        group: user
+        mode: "0700"
+      delegate_to: rocky-infra-01
+      become: true
+      when: not ansible_check_mode
+
+    - name: Install admin kubeconfig on Bastion for user
+      ansible.builtin.copy:
+        src: /tmp/ansible-k8s-admin.conf
+        dest: /home/user/.kube/config
+        owner: user
+        group: user
+        mode: "0600"
+      delegate_to: rocky-infra-01
+      become: true
+      no_log: true
+      when: not ansible_check_mode
+
+    - name: Remove temporary controller kubeconfig
+      ansible.builtin.file:
+        path: /tmp/ansible-k8s-admin.conf
+        state: absent
+      delegate_to: localhost
+      become: false
+      when: not ansible_check_mode

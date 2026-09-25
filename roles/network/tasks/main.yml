@@ -1,0 +1,75 @@
+---
+- name: Configure Bastion internal interface
+  community.general.nmcli:
+    conn_name: "{{ bastion_internal_connection }}"
+    ifname: "{{ bastion_internal_interface }}"
+    type: ethernet
+    ip4: "{{ bastion_internal_ip }}"
+    method4: manual
+    method6: disabled
+    dns4:
+      - "{{ infra_server_ip }}"
+    dns4_ignore_auto: true
+    dns4_search:
+      - "{{ infra_domain }}"
+    never_default4: true
+    autoconnect: true
+    zone: public
+    state: present
+  register: internal_profile
+
+- name: Check active connection on Bastion internal interface
+  ansible.builtin.command:
+    argv:
+      - nmcli
+      - -g
+      - GENERAL.CONNECTION
+      - device
+      - show
+      - "{{ bastion_internal_interface }}"
+  register: active_internal_connection
+  changed_when: false
+  check_mode: false
+
+- name: Activate Bastion internal interface when needed
+  ansible.builtin.command:
+    argv:
+      - nmcli
+      - connection
+      - up
+      - "{{ bastion_internal_connection }}"
+  when: internal_profile.changed or active_internal_connection.stdout != bastion_internal_connection
+
+- name: Read Bastion internal DNS priority
+  ansible.builtin.command:
+    argv:
+      - nmcli
+      - -g
+      - ipv4.dns-priority
+      - connection
+      - show
+      - "{{ bastion_internal_connection }}"
+  register: bastion_dns_priority
+  changed_when: false
+  check_mode: false
+
+- name: Prefer the lab DNS over VirtualBox NAT DNS on Bastion
+  ansible.builtin.command:
+    argv:
+      - nmcli
+      - connection
+      - modify
+      - "{{ bastion_internal_connection }}"
+      - ipv4.dns-priority
+      - "-50"
+  register: bastion_dns_priority_update
+  when: bastion_dns_priority.stdout | trim != '-50'
+
+- name: Apply preferred internal DNS settings on Bastion
+  ansible.builtin.command:
+    argv:
+      - nmcli
+      - connection
+      - up
+      - "{{ bastion_internal_connection }}"
+  when: bastion_dns_priority_update.changed | default(false)

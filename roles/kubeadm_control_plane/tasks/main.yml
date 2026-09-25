@@ -1,0 +1,110 @@
+---
+- name: Check whether kubeadm has already initialized the control plane
+  ansible.builtin.stat:
+    path: /etc/kubernetes/admin.conf
+  register: control_plane_admin_conf
+
+- name: Initialize the Kubernetes control plane once
+  ansible.builtin.command:
+    argv:
+      - kubeadm
+      - init
+      - --control-plane-endpoint
+      - "{{ kubernetes_api_endpoint }}"
+      - --apiserver-advertise-address
+      - "{{ kubernetes_control_plane_ip }}"
+      - --pod-network-cidr
+      - "{{ kubernetes_pod_cidr }}"
+      - --cri-socket
+      - unix:///run/containerd/containerd.sock
+      - --skip-token-print
+  async: 900
+  poll: 10
+  when:
+    - not ansible_check_mode
+    - not control_plane_admin_conf.stat.exists
+
+- name: Confirm the control plane generated its admin kubeconfig
+  ansible.builtin.stat:
+    path: /etc/kubernetes/admin.conf
+  register: initialized_admin_conf
+
+- name: Require a successfully initialized control plane
+  ansible.builtin.assert:
+    that:
+      - initialized_admin_conf.stat.exists
+    fail_msg: kubeadm init did not create /etc/kubernetes/admin.conf; inspect kubelet and kubeadm logs.
+  when: not ansible_check_mode
+
+- name: Create root kubectl configuration directory
+  ansible.builtin.file:
+    path: /root/.kube
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  when: initialized_admin_conf.stat.exists
+
+- name: Configure kubectl for root on the control plane
+  ansible.builtin.copy:
+    src: /etc/kubernetes/admin.conf
+    dest: /root/.kube/config
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0600"
+  when: initialized_admin_conf.stat.exists
+
+- name: Wait until the Kubernetes API reports ready
+  ansible.builtin.command:
+    argv:
+      - kubectl
+      - --kubeconfig=/etc/kubernetes/admin.conf
+      - get
+      - --raw=/readyz
+  register: api_ready
+  changed_when: false
+  until: api_ready.rc == 0 and api_ready.stdout | trim == 'ok'
+  retries: 36
+  delay: 5
+  when: not ansible_check_mode and initialized_admin_conf.stat.exists
+
+- name: Download the pinned Flannel release manifest
+  ansible.builtin.get_url:
+    url: "https://github.com/flannel-io/flannel/releases/download/{{ flannel_version }}/kube-flannel.yml"
+    dest: "/root/kube-flannel-{{ flannel_version }}.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  when: not ansible_check_mode and initialized_admin_conf.stat.exists
+
+- name: Apply Flannel CNI manifest
+  ansible.builtin.command:
+    argv:
+      - kubectl
+      - apply
+      - -f
+      - "/root/kube-flannel-{{ flannel_version }}.yml"
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: flannel_apply
+  changed_when: "'created' in flannel_apply.stdout or 'configured' in flannel_apply.stdout"
+  when: not ansible_check_mode and initialized_admin_conf.stat.exists
+
+- name: Wait for Flannel DaemonSet rollout
+  ansible.builtin.command:
+    argv:
+      - kubectl
+      - --kubeconfig=/etc/kubernetes/admin.conf
+      - -n
+      - kube-flannel
+      - rollout
+      - status
+      - daemonset/kube-flannel-ds
+      - --timeout=180s
+  register: flannel_rollout
+  changed_when: false
+  until: flannel_rollout.rc == 0
+  retries: 2
+  delay: 5
+  when: not ansible_check_mode and initialized_admin_conf.stat.exists

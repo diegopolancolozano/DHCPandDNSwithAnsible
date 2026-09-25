@@ -1,0 +1,19 @@
+---
+- name: Configure the official Kubernetes {{ kubernetes_minor_version }} RPM repository on Bastion
+  ansible.builtin.yum_repository:
+    name: kubernetes
+    description: Kubernetes {{ kubernetes_minor_version }}
+    baseurl: "https://pkgs.k8s.io/core:/stable:/{{ kubernetes_minor_version }}/rpm/"
+    enabled: true
+    gpgcheck: true
+    gpgkey: "https://pkgs.k8s.io/core:/stable:/{{ kubernetes_minor_version }}/rpm/repodata/repomd.xml.key"
+    exclude: kubelet kubeadm kubectl cri-tools kubernetes-cni
+    state: present
+
+- name: Install kubectl on Bastion
+  ansible.builtin.dnf:
+    name: kubectl
+    state: present
+    disable_excludes: kubernetes
+    update_cache: true
+  when: not ansible_check_mode

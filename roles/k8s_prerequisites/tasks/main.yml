@@ -1,0 +1,173 @@
+---
+- name: Disable swap persistently in fstab
+  ansible.builtin.replace:
+    path: /etc/fstab
+    regexp: '(?m)^([^#\s]\S*\s+\S+\s+swap\s+.*)$'
+    replace: '# Disabled for Kubernetes: \1'
+    backup: true
+
+- name: Check whether swap is currently active
+  ansible.builtin.command:
+    argv:
+      - swapon
+      - --show
+      - --noheadings
+  register: active_swap
+  changed_when: false
+  check_mode: false
+
+- name: Disable active swap
+  ansible.builtin.command:
+    argv:
+      - swapoff
+      - -a
+  when: active_swap.stdout | trim | length > 0
+
+- name: Set SELinux to permissive persistently
+  ansible.posix.selinux:
+    policy: targeted
+    state: permissive
+
+- name: Load and persist Kubernetes kernel modules
+  community.general.modprobe:
+    name: "{{ item }}"
+    state: present
+    persistent: present
+  loop:
+    - overlay
+    - br_netfilter
+
+- name: Configure Kubernetes sysctl parameters
+  ansible.builtin.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    state: present
+    sysctl_file: /etc/sysctl.d/99-kubernetes-cri.conf
+    reload: true
+  loop:
+    - { name: net.bridge.bridge-nf-call-iptables, value: "1" }
+    - { name: net.bridge.bridge-nf-call-ip6tables, value: "1" }
+    - { name: net.ipv4.ip_forward, value: "1" }
+
+- name: Configure official Docker RPM repository for containerd
+  ansible.builtin.yum_repository:
+    name: docker-ce-stable
+    description: Docker CE Stable - Rocky Linux 9 compatible
+    baseurl: https://download.docker.com/linux/rhel/9/$basearch/stable
+    enabled: true
+    gpgcheck: true
+    gpgkey: https://download.docker.com/linux/rhel/gpg
+    state: present
+
+- name: Configure the official Kubernetes {{ kubernetes_minor_version }} RPM repository
+  ansible.builtin.yum_repository:
+    name: kubernetes
+    description: Kubernetes {{ kubernetes_minor_version }}
+    baseurl: "https://pkgs.k8s.io/core:/stable:/{{ kubernetes_minor_version }}/rpm/"
+    enabled: true
+    gpgcheck: true
+    gpgkey: "https://pkgs.k8s.io/core:/stable:/{{ kubernetes_minor_version }}/rpm/repodata/repomd.xml.key"
+    exclude: kubelet kubeadm kubectl cri-tools kubernetes-cni
+    state: present
+
+- name: Install containerd and Kubernetes packages
+  ansible.builtin.dnf:
+    name: "{{ kubernetes_package_names }}"
+    state: present
+    disable_excludes: kubernetes
+    update_cache: true
+  when: not ansible_check_mode
+
+- name: Read the containerd v2 default configuration
+  ansible.builtin.command:
+    argv:
+      - containerd
+      - config
+      - default
+  register: containerd_default_config
+  changed_when: false
+  check_mode: false
+  when: not ansible_check_mode
+
+- name: Detect containerd package configuration with CRI disabled
+  ansible.builtin.command:
+    argv:
+      - grep
+      - -Eq
+      - '^disabled_plugins[[:space:]]*=[[:space:]]*\[[^]]*cri'
+      - /etc/containerd/config.toml
+  register: containerd_cri_disabled
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: not ansible_check_mode
+
+- name: Replace the Docker package stub with containerd defaults when CRI is disabled
+  ansible.builtin.copy:
+    content: "{{ containerd_default_config.stdout }}\n"
+    dest: /etc/containerd/config.toml
+    owner: root
+    group: root
+    mode: "0644"
+    backup: true
+  when:
+    - not ansible_check_mode
+    - containerd_cri_disabled.rc == 0
+  notify: Restart containerd
+
+- name: Ensure the containerd CRI plugin is enabled
+  ansible.builtin.lineinfile:
+    path: /etc/containerd/config.toml
+    regexp: '^disabled_plugins\s*='
+    line: 'disabled_plugins = []'
+  when: not ansible_check_mode
+  notify: Restart containerd
+
+- name: Use systemd cgroups in containerd
+  ansible.builtin.replace:
+    path: /etc/containerd/config.toml
+    regexp: '(?m)^(\s*SystemdCgroup\s*=\s*)false\s*$'
+    replace: '\1true'
+  notify: Restart containerd
+  when: not ansible_check_mode
+
+- name: Ensure containerd is enabled and running
+  ansible.builtin.systemd_service:
+    name: containerd
+    enabled: true
+    state: started
+  when: not ansible_check_mode
+
+- name: Pin kubelet node address to the isolated cluster interface
+  ansible.builtin.lineinfile:
+    path: /etc/sysconfig/kubelet
+    regexp: '^KUBELET_EXTRA_ARGS='
+    line: "KUBELET_EXTRA_ARGS=--node-ip={{ node_internal_ip }}"
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+  when: not ansible_check_mode
+
+- name: Enable kubelet at boot
+  ansible.builtin.systemd_service:
+    name: kubelet
+    enabled: true
+  when: not ansible_check_mode
+
+- name: Ensure firewalld is enabled and running
+  ansible.builtin.systemd_service:
+    name: firewalld
+    enabled: true
+    state: started
+
+- name: Allow Kubernetes and Flannel ports from the isolated cluster subnet
+  ansible.posix.firewalld:
+    rich_rule: >-
+      rule family="ipv4" source address="{{ kubernetes_internal_cidr }}"
+      port port="{{ item.port }}" protocol="{{ item.protocol }}" accept
+    state: enabled
+    permanent: true
+    immediate: true
+    zone: public
+  loop: "{{ kubernetes_firewall_rules }}"

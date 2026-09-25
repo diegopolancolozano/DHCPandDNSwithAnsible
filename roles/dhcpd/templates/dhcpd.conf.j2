@@ -12,7 +12,9 @@ log-facility local7;
 
 subnet {{ infra_network }} netmask {{ infra_netmask }} {
   range {{ dhcp_range_start }} {{ dhcp_range_end }};
+{% if dhcp_gateway | default('') | length > 0 %}
   option routers {{ dhcp_gateway }};
+{% endif %}
   option broadcast-address {{ infra_network | regex_replace('\.0$', '.255') }};
 }
 

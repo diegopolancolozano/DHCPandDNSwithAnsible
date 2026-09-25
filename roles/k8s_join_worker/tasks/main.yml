@@ -1,0 +1,48 @@
+---
+- name: Check whether this worker has already joined the cluster
+  ansible.builtin.stat:
+    path: /etc/kubernetes/kubelet.conf
+  register: worker_kubelet_conf
+
+- name: Create a short-lived join command on the control plane
+  ansible.builtin.command:
+    argv:
+      - kubeadm
+      - token
+      - create
+      - --ttl
+      - 30m
+      - --print-join-command
+  delegate_to: k8s-master-01
+  register: kubeadm_join_command
+  when:
+    - not ansible_check_mode
+    - not worker_kubelet_conf.stat.exists
+  no_log: true
+
+- name: Join the worker to the cluster once
+  ansible.builtin.command:
+    cmd: "{{ kubeadm_join_command.stdout }} --cri-socket unix:///run/containerd/containerd.sock"
+  async: 900
+  poll: 10
+  when:
+    - not ansible_check_mode
+    - not worker_kubelet_conf.stat.exists
+  no_log: true
+
+- name: Wait for worker Node to become Ready
+  ansible.builtin.command:
+    argv:
+      - kubectl
+      - --kubeconfig=/etc/kubernetes/admin.conf
+      - wait
+      - --for=condition=Ready
+      - "node/{{ inventory_hostname }}"
+      - --timeout=10s
+  delegate_to: k8s-master-01
+  register: worker_ready
+  changed_when: false
+  until: worker_ready.rc == 0
+  retries: 36
+  delay: 5
+  when: not ansible_check_mode

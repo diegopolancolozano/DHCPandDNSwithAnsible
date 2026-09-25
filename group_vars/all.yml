@@ -3,9 +3,10 @@
 # Variables Globales (DNS y DHCP)
 # ==========================================
 infra_domain: "polanco.lab"
-infra_server_ip: "192.168.56.10"
-infra_network: "192.168.56.0"
+infra_server_ip: "172.20.0.10"
+infra_network: "172.20.0.0"
 infra_netmask: "255.255.255.0"
+kubernetes_minor_version: "v1.37"
 
 # ==========================================
 # Variables DNS (BIND)
@@ -13,34 +14,65 @@ infra_netmask: "255.255.255.0"
 dns_forwarders:
   - "8.8.8.8"
   - "1.1.1.1"
+dns_listen_ips:
+  - "192.168.56.10"
+  - "172.20.0.10"
 dns_allowed_networks:
   - "127.0.0.0/8"
   - "192.168.56.0/24"
+  - "172.20.0.0/24"
 dns_reverse_zone: "56.168.192.in-addr.arpa"
-dns_serial: "2026090901" 
+dns_internal_reverse_zone: "0.20.172.in-addr.arpa"
+dns_serial: "2026092401"
 
 dns_records_a:
-  - { name: "ns1", ip: "192.168.56.10" }
+  - { name: "ns1", ip: "172.20.0.10" }
+  - { name: "k8s-bastion", ip: "172.20.0.10" }
+  - { name: "bastion-mgmt", ip: "192.168.56.10" }
+  - { name: "k8s-master-01", ip: "172.20.0.21" }
+  - { name: "k8s-master-mgmt", ip: "192.168.56.11" }
+  - { name: "k8s-worker-01", ip: "172.20.0.22" }
+  - { name: "k8s-worker-mgmt", ip: "192.168.56.12" }
   - { name: "router", ip: "192.168.56.1" }
   - { name: "cliente01", ip: "192.168.56.50" }
 
 dns_records_ptr:
-  - { last_octet: "10", name: "ns1" }
+  - { last_octet: "10", name: "bastion-mgmt" }
+  - { last_octet: "11", name: "k8s-master-mgmt" }
+  - { last_octet: "12", name: "k8s-worker-mgmt" }
   - { last_octet: "1", name: "router" }
   - { last_octet: "50", name: "cliente01" }
+
+dns_records_ptr_internal:
+  - { last_octet: "10", name: "ns1" }
+  - { last_octet: "21", name: "k8s-master-01" }
+  - { last_octet: "22", name: "k8s-worker-01" }
 
 # ==========================================
 # Variables DHCP
 # ==========================================
 # enp0s8 suele ser la segunda interfaz en VirtualBox (Host-Only o Red Interna). 
-dhcp_interface: "enp0s8"
-dhcp_gateway: "192.168.56.1"
-dhcp_range_start: "192.168.56.100"
-dhcp_range_end: "192.168.56.200"
+dhcp_interface: "enp0s9"
+dhcp_gateway: ""
+dhcp_range_start: "172.20.0.100"
+dhcp_range_end: "172.20.0.200"
 dhcp_default_lease: 86400
 dhcp_max_lease: 172800
 
+bastion_internal_interface: "enp0s9"
+bastion_internal_connection: "k8s-internal"
+bastion_internal_ip: "172.20.0.10/24"
+
+node_internal_interface: "enp0s9"
+node_internal_connection: "k8s-internal"
+node_dns_server: "172.20.0.10"
+node_management_interface: "enp0s8"
+node_management_connection: "k8s-management"
+
 dhcp_reservations:
-  - name: "pc_docente"
-    mac: "08:00:27:11:22:33" # MAC de ejemplo de VirtualBox (empiezan con 08:00:27)
-    ip: "192.168.56.20"
+  - name: "k8s-master-01"
+    mac: "08:00:27:c5:67:2f"
+    ip: "172.20.0.21"
+  - name: "k8s-worker-01"
+    mac: "08:00:27:77:77:b4"
+    ip: "172.20.0.22"
