@@ -1,183 +1,178 @@
-# Taller práctico: despliegue de un clúster Kubernetes con kubeadm
+# Despliegue de Kubernetes con kubeadm en Rocky Linux
 
-**Universidad ICESI — Facultad de Ingeniería**<br>
-**Programa:** Ingeniería de Telemática y Sistemas<br>
-**Estudiante:** Diego Polanco Lozano<br>
-**Curso:** Infraestructura de Redes y Sistemas / Cloud & DevOps<br>
-**Fecha:** 25 de septiembre de 2026
+**Universidad ICESI · Ingeniería de Telemática y Sistemas**
 
-> **Estado del informe:** avance parcial. Las evidencias disponibles documentan la topología, las interfaces, DHCP y DNS. La instalación y validación del clúster Kubernetes se completarán en las siguientes etapas; no se presentan como terminadas.
+**Curso:** Infraestructura de Redes y Sistemas / Cloud & DevOps
 
-## 1. Introducción
+**Estudiante:** Diego Polanco Lozano
 
-Este taller implementa una infraestructura de laboratorio virtualizada en VirtualBox para desplegar, mediante Ansible, los servicios de red y un clúster Kubernetes instalado con `kubeadm` sobre Rocky Linux 9. El diseño separa la administración de las máquinas de la red interna utilizada por DHCP, DNS y los nodos Kubernetes.
+**Fecha de validación:** 25 de septiembre de 2026
 
-La automatización se organiza en roles de Ansible y variables centralizadas. El objetivo es que la configuración pueda repetirse de forma idempotente: volver a ejecutar el playbook mantiene el estado deseado sin duplicar reservas, zonas, nodos ni aplicaciones.
+## Resultado
 
-## 2. Arquitectura y direccionamiento
+Se desplegó un clúster de Kubernetes con un control plane y un worker. El Bastión ofrece DHCP y DNS y aloja el `kubeconfig` para administrar el clúster. La validación en vivo confirmó los dos nodos `Ready`, los pods de sistema `Running`, resolución DNS desde un pod del Worker y una respuesta HTTP 200 de Nginx por NodePort.
 
-La topología tiene tres máquinas virtuales: Bastión/servicios de infraestructura, nodo Master (control plane) y nodo Worker. Las VMs cuentan con una interfaz NAT para salida a Internet. El Bastión y los nodos usan además una red Host-Only para administración desde el host; una red interna aislada conecta el Bastión con los nodos del clúster.
+La actividad solicita Rocky Linux 9.7 y varias interfaces, incluida Bridge. Las VMs del laboratorio ejecutan Rocky Linux 9.8 y, en la configuración comprobada, usan NAT, Host-Only y red interna; no tienen adaptador Bridge. Estos dos puntos quedan como diferencias frente al enunciado.
 
-![Máquinas virtuales del laboratorio encendidas en VirtualBox](photos/0_VirtualBox.png)
+## Arquitectura y direccionamiento
 
-*Figura 1. Máquinas virtuales Rocky Linux, Master y Worker en ejecución en VirtualBox.*
-
-| Máquina | Interfaz / red | Dirección | Función |
+| VM | Red / interfaz | Dirección | Función |
 |---|---|---:|---|
 | Bastión | NAT (`enp0s3`) | `10.0.2.15/24` | Salida a Internet |
-| Bastión | Host-Only (`enp0s8`) | `192.168.56.10/24` | Administración y acceso desde el host |
-| Bastión | Interna `k8s-internal` (`enp0s9`) | `172.20.0.10/24` | DHCP, DNS y comunicación del clúster |
-| Master | Host-Only (`enp0s8`) | `192.168.56.11/24` | Administración/SSH desde el host |
-| Master | Interna (`enp0s9`) | `172.20.0.21/24` | IP reservada; control plane Kubernetes |
-| Worker | Host-Only (`enp0s8`) | `192.168.56.12/24` | Administración/SSH desde el host |
-| Worker | Interna (`enp0s9`) | `172.20.0.22/24` | IP reservada; nodo Worker |
+| Bastión | Host-Only (`enp0s8`) | `192.168.56.10/24` | Administración desde el host |
+| Bastión | Interna (`enp0s9`) | `172.20.0.10/24` | DHCP, BIND y comunicación del laboratorio |
+| Master | Host-Only (`enp0s8`) | `192.168.56.11/24` | Acceso administrativo |
+| Master | Interna (`enp0s9`) | `172.20.0.21/24` | Control plane |
+| Worker | Host-Only (`enp0s8`) | `192.168.56.12/24` | Acceso administrativo |
+| Worker | Interna (`enp0s9`) | `172.20.0.22/24` | Cargas de trabajo |
 
-Las direcciones internas `.21` y `.22` se reservan por MAC desde DHCP. Las IP Host-Only `.11` y `.12` se usan para administrar las VMs y no son las IP de servicio del clúster. La red NAT de VirtualBox normalmente utiliza `10.0.2.15` en cada VM; no se usa como dirección de comunicación entre nodos.
+Las IP internas de Master y Worker se reservan por MAC desde DHCP. DHCP escucha en `enp0s9`, sirve `172.20.0.0/24`, entrega direcciones dinámicas entre `.100` y `.200` y anuncia DNS `172.20.0.10` con dominio de búsqueda `polanco.lab`. BIND publica los nombres directos e inversos de los equipos.
 
-![Interfaces conectadas en el Bastión](photos/1_Interfaces.png)
+![Bastión, Master y Worker activos en VirtualBox](photos/0_VirtualBox.png)
 
-*Figura 2. Interfaces del Bastión: NAT, Host-Only y red interna conectadas.*
+*Figura 1. Las tres máquinas virtuales del laboratorio están encendidas en VirtualBox.*
 
-![Direcciones IP y rutas del Bastión](photos/2_DireccionesInterfaz.png)
+![Interfaces de red del Bastión](photos/1_Interfaces.png)
 
-*Figura 3. Direccionamiento del Bastión y estado activo de DHCP (`dhcpd`) y DNS (`named`). La interfaz interna usa `172.20.0.10/24`.*
+*Figura 2. El Bastión muestra conectadas las interfaces NAT, Host-Only y la interfaz interna `enp0s9`.*
 
-## 3. Automatización con Ansible
+![Direcciones, rutas y servicios del Bastión](photos/2_DireccionesInterfaz.png)
 
-El playbook principal es `site.yml`. Las variables de dominio, direccionamiento, reservas y versiones están en `group_vars/all.yml`; los destinos y sus direcciones de administración están declarados en `inventory/hosts.ini`.
+*Figura 3. El Bastión tiene `172.20.0.10/24` en la red interna y muestra `dhcpd` y `named` activos.*
 
-| Componente | Responsabilidad |
+![Configuración Host-Only de VirtualBox](photos/6_OnlyHost.png)
+
+*Figura 4. Red Host-Only configurada en VirtualBox para el acceso administrativo desde el host.*
+
+![Red NAT de VirtualBox](photos/7_Natnetwork.png)
+
+*Figura 5. Red NAT configurada para proporcionar salida a Internet a las máquinas virtuales.*
+
+## Automatización con Ansible
+
+El playbook principal es `site.yml`; `inventory/hosts.ini` separa Bastión, control plane y worker, y `group_vars/all.yml` centraliza dominio, direccionamiento y reservas. Los roles configuran la red y DNS/DHCP del Bastión, preparan los nodos, inicializan Kubernetes, unen el Worker y despliegan las pruebas.
+
+| Rol | Responsabilidad |
 |---|---|
-| `roles/network/` | Configura la interfaz interna y el resolvedor del Bastión. |
-| `roles/dns_bind/` | Instala y configura BIND, zonas directas e inversas y validaciones de zona. |
-| `roles/dhcpd/` | Instala/configura DHCP, valida `dhcpd.conf` y limita el servicio a la interfaz interna. |
-| `roles/k8s_node_network/` | Configura hostname, redes y resolvedor de Master y Worker. |
-| `roles/k8s_prerequisites/` | Aplica prerrequisitos del sistema, runtime de contenedores y herramientas Kubernetes. |
-| `roles/kubeadm_control_plane/` | Inicializa el control plane y aplica Flannel como CNI. |
-| `roles/k8s_join_worker/` | Une el Worker al clúster. |
-| `roles/k8s_validation/` | Despliega Nginx y prueba HTTP y DNS interno del clúster. |
+| `network` | Configura la interfaz interna y el resolvedor del Bastión. |
+| `dns_bind` / `dhcpd` | Instala, configura y valida BIND y DHCP. |
+| `k8s_node_network` | Configura hostname, redes y DNS en Master y Worker. |
+| `k8s_prerequisites` | Desactiva swap, configura SELinux, kernel, sysctl, containerd, Kubernetes y firewalld. |
+| `kubeadm_control_plane` | Inicializa kubeadm y aplica Flannel usando `enp0s9`. |
+| `k8s_join_worker` | Une el Worker al clúster. |
+| `kubectl_client` | Prepara kubectl y el acceso administrativo desde el Bastión. |
+| `k8s_validation` | Despliega Nginx y comprueba NodePort y CoreDNS. |
 
-Desde WSL, ubicado en la raíz del repositorio, la ejecución interactiva es:
+Desde WSL, en la raíz del repositorio:
 
 ```bash
+export ANSIBLE_CONFIG=./ansible.cfg
+ansible-playbook -i inventory/hosts.ini site.yml --syntax-check
 ansible-playbook -i inventory/hosts.ini site.yml --ask-pass --ask-become-pass
 ```
 
-Antes de aplicar cambios se puede revisar la sintaxis y simular el playbook:
+La corrección de reenvío CNI se puede aplicar de forma aislada:
 
 ```bash
-ansible-playbook -i inventory/hosts.ini site.yml --syntax-check
-ansible-playbook -i inventory/hosts.ini site.yml --check --diff --ask-pass --ask-become-pass
+ansible-playbook -i inventory/hosts.ini site.yml \
+  --limit k8s_nodes --tags pod_network_firewall \
+  --ask-pass --ask-become-pass
 ```
 
-La simulación `--check` es una previsualización; tareas que inicializan el clúster o consultan recursos en ejecución pueden omitirse en ese modo. Para comprobar idempotencia, se ejecuta el playbook completo dos veces y se revisa que la segunda ejecución no reporte cambios inesperados. No se deben guardar contraseñas ni credenciales de `kubeconfig` en el repositorio.
+## Fase 1: Bastión, DHCP y DNS
 
-## 4. Fase 1: Bastión, DHCP y DNS
+El servicio DHCP valida su archivo de configuración y mantiene reservas por MAC para Master (`172.20.0.21`) y Worker (`172.20.0.22`). BIND responde por `polanco.lab` y sus zonas inversas.
 
-### 4.1 DHCP
+![Validación de DHCP y reservas fijas](photos/3_DHCP.png)
 
-El servidor DHCP escucha en la interfaz interna `enp0s9` y atiende la subred `172.20.0.0/24`. El rango dinámico configurado es `172.20.0.100`–`172.20.0.200`; las direcciones de Master y Worker quedan reservadas por MAC fuera de ese rango. El servidor DNS que reciben los clientes es `172.20.0.10`, y el dominio de búsqueda es `polanco.lab`. No se anuncia una puerta de enlace en esta red aislada.
+*Figura 6. `dhcpd -t` valida la configuración y se observan el rango dinámico y las dos reservas MAC/IP.*
 
-![Validación sintáctica y reservas de dhcpd](photos/3_DHCP.png)
+![Oferta DHCP en la red interna](photos/8_Petición%20DHCP.png)
 
-*Figura 4. `dhcpd -t` valida la configuración; el fragmento muestra el rango dinámico y las reservas MAC/IP de Master (`172.20.0.21`) y Worker (`172.20.0.22`).*
+*Figura 7. Nmap recibe una oferta DHCP desde `172.20.0.10` con DNS `172.20.0.10` y dominio `polanco.lab`.*
 
-La siguiente evidencia usa el script de descubrimiento de Nmap para emitir una solicitud de descubrimiento DHCP en la red interna:
+![Consultas directas e inversa a BIND](photos/4_DNS.png)
 
-```bash
-sudo nmap --script broadcast-dhcp-discover -e enp0s9
-```
+*Figura 8. Las consultas DNS resuelven Master, Worker y la dirección inversa del Master.*
 
-![Oferta de DHCP detectada con Nmap](photos/Petición%20DHCP.png)
-
-*Figura 5. Nmap recibió una oferta `DHCPOFFER` del servidor `172.20.0.10`, con IP dinámica ofrecida `172.20.0.100`, máscara `/24`, DNS `172.20.0.10` y dominio `polanco.lab`. Esta prueba demuestra que el servidor ofrece una dirección; no equivale a configurar una concesión persistente en una VM cliente.*
-
-### 4.2 DNS autoritativo
-
-BIND sirve el dominio interno `polanco.lab` y las zonas inversas configuradas. Entre los registros se encuentran `k8s-master-01.polanco.lab` → `172.20.0.21`, `k8s-worker-01.polanco.lab` → `172.20.0.22` y `ns1.polanco.lab` → `172.20.0.10`.
-
-![Consultas directas e inversas al DNS](photos/4_DNS.png)
-
-*Figura 6. Consultas DNS directas para Master y Worker, y consulta inversa para la IP del Master.*
-
-Comandos equivalentes para repetir la validación desde una máquina que alcance al Bastión:
+Comandos para repetir la validación desde una máquina con acceso al Bastión:
 
 ```bash
+sudo systemctl is-active dhcpd named
+sudo dhcpd -t
+sudo named-checkconf
 dig @172.20.0.10 k8s-master-01.polanco.lab A +short
 dig @172.20.0.10 k8s-worker-01.polanco.lab A +short
 dig @172.20.0.10 -x 172.20.0.21 +short
 ```
 
-Los resultados esperados son `172.20.0.21`, `172.20.0.22` y `k8s-master-01.polanco.lab.` respectivamente.
+## Fase 2: preparación de los nodos
 
-## 5. Fase 2: preparación de Master y Worker — pendiente de evidencia
+Ansible configura nombres únicos, desactiva swap de forma persistente, deja SELinux en modo permisivo, carga `overlay` y `br_netfilter`, habilita el reenvío IPv4 y el paso de paquetes por bridges, instala containerd y las herramientas de Kubernetes y abre los puertos requeridos.
 
-Ansible prepara ambos nodos antes de inicializar Kubernetes. En esta fase se debe verificar y documentar:
+![Direcciones e información del Master](photos/9_Ip'smaster.png)
 
-- Resolución de los nombres de ambos nodos y conectividad por la red interna.
-- Swap desactivado y SELinux en modo permisivo según los prerrequisitos definidos para el taller.
-- Módulos `overlay` y `br_netfilter`, parámetros `sysctl` y ausencia de errores en `containerd`.
-- Versiones instaladas de `kubeadm`, `kubelet` y `kubectl`, y estado de los servicios.
+*Figura 9. El Master usa `172.20.0.21` en la red interna; la evidencia identifica Rocky Linux 9.8.*
 
-Comandos de inspección sugeridos en cada nodo:
+![Direcciones e información del Worker](photos/10_Ip'sworker.png)
 
-```bash
-hostnamectl
-ip -4 -br address
-getent ahostsv4 k8s-master-01.polanco.lab k8s-worker-01.polanco.lab
-free -h
-getenforce
-lsmod | grep -E 'overlay|br_netfilter'
-sysctl net.bridge.bridge-nf-call-iptables net.ipv4.ip_forward
-systemctl is-active containerd kubelet
-kubeadm version
-kubectl version --client
-```
+*Figura 10. El Worker usa `172.20.0.22` en la red interna; la evidencia identifica Rocky Linux 9.8.*
 
-**[Pendiente: insertar capturas de prerrequisitos y servicios en Master y Worker.]**
+![Conectividad de Ansible a los nodos](photos/11_pongansible.png)
 
-## 6. Fase 3: inicialización y unión del clúster — pendiente
+*Figura 11. Ansible alcanza Master y Worker y ambos responden `pong`.*
 
-El control plane se inicializa con la IP interna `172.20.0.21`, el endpoint `k8s-master-01.polanco.lab:6443`, la red de Pods `10.244.0.0/16` y Flannel como CNI. El rol de Ansible controla esta configuración; no se debe ejecutar `kubeadm init` manualmente sobre un clúster ya inicializado.
+## Fase 3: control plane, Worker y red de pods
 
-Luego se une `k8s-worker-01` al control plane. La evidencia final de esta etapa debe mostrar ambos nodos en estado `Ready`:
+`kubeadm` inicializa el control plane en `172.20.0.21`, con endpoint `k8s-master-01.polanco.lab:6443` y red de pods `10.244.0.0/16`. El Worker se une con la IP `172.20.0.22`. Flannel conecta las redes de pods entre nodos y queda fijado a `enp0s9`, evitando anunciar la IP NAT compartida de VirtualBox.
+
+![Nodos del clúster en estado Ready](photos/12_Nodoslistos.png)
+
+*Figura 12. `kubectl get nodes -o wide` muestra Master y Worker en estado `Ready` y sus IP internas.*
+
+![Pods del sistema y aplicación en ejecución](photos/13_Componentes%20sanos.png)
+
+*Figura 13. La salida de `kubectl get pods -A -o wide` muestra CoreDNS, Flannel, kube-proxy, el control plane y Nginx en estado `Running`.*
+
+Comprobaciones desde el Bastión:
 
 ```bash
+export KUBECONFIG=/home/user/.kube/config
 kubectl get nodes -o wide
-kubectl get pods -A
+kubectl get pods -A -o wide
 ```
 
-**[Pendiente: insertar captura del resultado de `kubeadm init`, instalación de Flannel y `kubectl get nodes` con Master y Worker en `Ready`.]**
+## Fase 4: aplicación y DNS de Kubernetes
 
-En la última ejecución registrada, `kubeadm init` llegó a crear el control plane, pero la aplicación de Flannel quedó incompleta y el Master apareció `NotReady`; el Worker todavía no se había unido. Por ello, ese intento no se considera una instalación de clúster terminada y se debe volver a validar antes del cierre.
+Un Deployment mantiene una réplica de Nginx programada en el Worker. El Service `taller-nginx` es de tipo NodePort y expone HTTP en `30080`.
 
-## 7. Fase 4: pruebas de aplicación y DNS de Kubernetes — pendiente
+![Respuesta HTTP de Nginx por NodePort](photos/14_curlNgnix.png)
 
-El rol `k8s_validation` aplica un Deployment de Nginx programado en el Worker y un Service `NodePort` en el puerto `30080`. También crea un Job de BusyBox que consulta `kubernetes.default.svc.cluster.local` para validar CoreDNS.
+*Figura 14. Una consulta desde el Bastión a `172.20.0.22:30080` recibe HTTP 200 y la página de bienvenida de Nginx.*
 
-Una vez que los dos nodos estén `Ready`, las comprobaciones previstas son:
+CoreDNS se comprobó desde un pod temporal del Worker: `kubernetes.default.svc.cluster.local` resolvió a `10.96.0.1` y `taller-nginx.default.svc.cluster.local` a `10.100.149.204`. La política de firewalld permite el reenvío entre interfaces CNI/VXLAN únicamente para el CIDR de pods `10.244.0.0/16`.
 
 ```bash
-kubectl get deployments,pods,services -o wide
+export KUBECONFIG=/home/user/.kube/config
 curl -i http://172.20.0.22:30080/
-kubectl logs job/taller-dns-resolution
+kubectl run dns-test --image=busybox:1.36.1 --restart=Never \
+  --command -- sh -c 'nslookup kubernetes.default.svc.cluster.local && nslookup taller-nginx.default.svc.cluster.local'
+kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/dns-test --timeout=60s
+kubectl logs dns-test
+kubectl delete pod dns-test --wait=false
 ```
 
-Se espera respuesta HTTP `200` de Nginx y resolución del nombre interno por el Job. La ejecución de Ansible realiza estas validaciones desde el Bastión.
+## Resultado frente a la rúbrica
 
-**[Pendiente: insertar capturas del pod Nginx en el Worker, respuesta HTTP por NodePort y salida exitosa del Job DNS.]**
+| Criterio | Evidencia / resultado |
+|---|---|
+| Bastión con DHCP y DNS | Servicios activos; configuración DHCP válida; consultas directas e inversas correctas. |
+| Reservas para Master y Worker | Reservas por MAC y concesiones `.21` y `.22`. |
+| Prerrequisitos de Kubernetes | Configurados mediante Ansible: swap, SELinux, módulos, sysctl, containerd y firewalld. |
+| Control plane y Worker | Master y Worker `Ready`, Kubernetes `v1.37.1`, containerd `2.3.5`. |
+| CNI y DNS de pods | Flannel en la red interna; consultas CoreDNS comprobadas desde el Worker. |
+| Aplicación de prueba | Nginx `Running` en el Worker; NodePort `30080` responde HTTP 200. |
+| Rocky Linux solicitado | Parcial: el enunciado indica 9.7; las VMs muestran 9.8. |
+| Interfaces de red solicitadas | Parcial: se observan NAT, Host-Only e interna; falta Bridge. |
 
-## 8. Criterios de cierre
-
-El taller se considerará validado cuando se cuente con evidencia de que:
-
-1. `dhcpd` y `named` están activos y sus configuraciones pasan las validaciones respectivas.
-2. El servidor DHCP entrega una oferta y los nodos reciben las reservas correspondientes.
-3. Las consultas DNS directas e inversas devuelven los registros esperados.
-4. Master y Worker están `Ready`, y los Pods del sistema —incluido Flannel y CoreDNS— están operativos.
-5. Nginx responde por NodePort y el Job resuelve un nombre de servicio de Kubernetes.
-6. Una segunda ejecución de Ansible conserva el estado y no introduce cambios inesperados.
-
-## 9. Conclusión del avance actual
-
-Las capturas incluidas verifican la topología básica, el direccionamiento del Bastión, la sintaxis y las reservas de DHCP, una oferta DHCP en la red interna y la resolución directa e inversa de DNS. Las fases Kubernetes aparecen como pendientes porque todavía falta adjuntar evidencia que confirme el estado saludable del clúster y sus pruebas de aplicación. El informe se actualizará a medida que se completen esas validaciones.
+La prueba no consiste solamente en que los pods estén encendidos: también se confirmó la resolución de servicios desde un pod del Worker y el acceso HTTP al NodePort desde el Bastión. La evidencia fotográfica disponible incluye cada figura con su descripción; la prueba CoreDNS se conserva como resultado de validación en vivo.

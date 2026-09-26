@@ -170,3 +170,66 @@
     immediate: true
     zone: public
   loop: "{{ kubernetes_firewall_rules }}"
+
+- name: Configure scoped forwarding between CNI and VXLAN interfaces
+  ansible.builtin.shell: |
+    set -eu
+    changed=0
+    ensure_zone() {
+      case " $(firewall-cmd --permanent --get-zones) " in
+        *" $1 "*) return 0 ;;
+      esac
+      {
+        firewall-cmd --permanent --new-zone="$1" >/dev/null
+        changed=1
+      }
+    }
+    ensure_policy() {
+      policy="$1"; ingress="$2"; egress="$3"
+      case " $(firewall-cmd --permanent --get-policies) " in
+        *" $policy "*) ;;
+        *)
+        firewall-cmd --permanent --new-policy="$policy" >/dev/null
+        changed=1
+        ;;
+      esac
+      query=$(firewall-cmd --permanent --policy="$policy" --query-ingress-zone="$ingress" 2>/dev/null || true)
+      [ "$query" = yes ] || {
+        firewall-cmd --permanent --policy="$policy" --add-ingress-zone="$ingress" >/dev/null
+        changed=1
+      }
+      query=$(firewall-cmd --permanent --policy="$policy" --query-egress-zone="$egress" 2>/dev/null || true)
+      [ "$query" = yes ] || {
+        firewall-cmd --permanent --policy="$policy" --add-egress-zone="$egress" >/dev/null
+        changed=1
+      }
+      query=$(firewall-cmd --permanent --policy="$policy" --query-rich-rule='rule family="ipv4" source address="{{ kubernetes_pod_cidr }}" destination address="{{ kubernetes_pod_cidr }}" accept' 2>/dev/null || true)
+      [ "$query" = yes ] || {
+        firewall-cmd --permanent --policy="$policy" --add-rich-rule='rule family="ipv4" source address="{{ kubernetes_pod_cidr }}" destination address="{{ kubernetes_pod_cidr }}" accept' >/dev/null
+        changed=1
+      }
+    }
+    remove_public_zone() {
+      policy="$1"; direction="$2"
+      query=$(firewall-cmd --permanent --policy="$policy" --query-"$direction"-zone=public 2>/dev/null || true)
+      if [ "$query" = yes ]; then
+        firewall-cmd --permanent --policy="$policy" --remove-"$direction"-zone=public >/dev/null
+        changed=1
+      fi
+      return 0
+    }
+    ensure_zone podnet
+    ensure_zone overlay
+    query=$(firewall-cmd --permanent --zone=podnet --query-interface=cni0 2>/dev/null || true)
+    [ "$query" = yes ] || { firewall-cmd --permanent --zone=podnet --add-interface=cni0 >/dev/null; changed=1; }
+    query=$(firewall-cmd --permanent --zone=overlay --query-interface=flannel.1 2>/dev/null || true)
+    [ "$query" = yes ] || { firewall-cmd --permanent --zone=overlay --add-interface=flannel.1 >/dev/null; changed=1; }
+    ensure_policy pod-fwd podnet overlay
+    ensure_policy ovl-fwd overlay podnet
+    remove_public_zone pod-fwd ingress
+    remove_public_zone pod-fwd egress
+    if [ "$changed" -eq 1 ]; then firewall-cmd --reload >/dev/null; echo changed; else echo unchanged; fi
+  register: pod_network_firewall
+  changed_when: pod_network_firewall.stdout | trim == 'changed'
+  when: not ansible_check_mode
+  tags: [pod_network_firewall]

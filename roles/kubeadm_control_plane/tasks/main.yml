@@ -78,6 +78,15 @@
     mode: "0644"
   when: not ansible_check_mode and initialized_admin_conf.stat.exists
 
+- name: Configure Flannel to use the internal cluster interface
+  ansible.builtin.lineinfile:
+    path: "/root/kube-flannel-{{ flannel_version }}.yml"
+    insertafter: '^\s+- --kube-subnet-mgr\s*$'
+    line: "        - --iface={{ flannel_interface }}"
+    state: present
+  when: not ansible_check_mode
+  tags: [flannel_interface]
+
 - name: Apply Flannel CNI manifest
   ansible.builtin.command:
     argv:
