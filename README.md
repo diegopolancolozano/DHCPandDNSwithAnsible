@@ -14,6 +14,18 @@ Se desplegó un clúster de Kubernetes con un control plane y un worker. El Bast
 
 La actividad solicita Rocky Linux 9.7 y varias interfaces, incluida Bridge. Las VMs del laboratorio ejecutan Rocky Linux 9.8 y, en la configuración comprobada, usan NAT, Host-Only y red interna; no tienen adaptador Bridge. Estos dos puntos quedan como diferencias frente al enunciado.
 
+## Organización del repositorio
+
+El proyecto reúne la automatización de infraestructura, la configuración de los nodos Kubernetes y las evidencias de ejecución:
+
+- `site.yml`: playbook principal que coordina los roles en el orden de despliegue.
+- `ansible.cfg`: configuración de Ansible para este proyecto.
+- `inventory/hosts.ini`: inventario de Bastión, Master y Worker.
+- `group_vars/all.yml`: variables compartidas, como dominio, redes, direcciones y reservas DHCP.
+- `roles/`: tareas organizadas por función: red, DHCP, DNS, prerrequisitos Kubernetes, control plane, unión del Worker, cliente `kubectl` y validación.
+- `photos/`: capturas utilizadas como evidencia de la topología y las pruebas.
+- `Informe_Laboratorio_Kubernetes.docx`: informe entregable con el procedimiento, resultados, capturas comentadas y revisión de la rúbrica.
+
 ## Arquitectura y direccionamiento
 
 | VM | Red / interfaz | Dirección | Función |
